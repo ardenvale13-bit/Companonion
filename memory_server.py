@@ -848,73 +848,87 @@ async def escalate(
 
 
 # ============================================================
-# TEMPORARY MIGRATION ENDPOINT (remove after data import)
+# SEED DATA ON FIRST RUN
 # ============================================================
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.routing import Route
 
-async def migrate_handler(request: Request):
-    """Bulk import endpoint - POST JSON to import memories and void entries"""
-    try:
-        data = await request.json()
-        results = {"memories": 0, "observations": 0, "void_entries": 0, "errors": []}
+def seed_memories():
+    """Import memories from export file if database is empty"""
+    seed_file = Path(__file__).parent / "memory_export.json"
+    if not seed_file.exists():
+        return
+    
+    conn = get_db()
+    count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+    if count > 0:
+        conn.close()
+        print(f"Memory DB already has {count} entities, skipping seed.")
+        return
+    
+    print("Seeding memory database from export...")
+    with open(seed_file) as f:
+        entities = json.load(f)
+    
+    imported = 0
+    for entity in entities:
+        try:
+            cursor = conn.execute(
+                "INSERT OR IGNORE INTO entities (name, entity_type, database, salience, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (entity['name'], entity['type'], entity['database'], entity['salience'], entity.get('created_at', now_iso()), entity.get('updated_at', now_iso()))
+            )
+            entity_id = cursor.lastrowid
+            if entity_id == 0:
+                row = conn.execute("SELECT id FROM entities WHERE name = ? AND database = ?", (entity['name'], entity['database'])).fetchone()
+                entity_id = row['id']
+            
+            for obs in entity.get('observations', []):
+                conn.execute(
+                    "INSERT INTO observations (entity_id, content, added_at) VALUES (?, ?, ?)",
+                    (entity_id, obs['content'], obs.get('added_at', now_iso()))
+                )
+            imported += 1
+        except Exception as e:
+            print(f"  Error importing '{entity.get('name', '?')}': {e}")
+    
+    conn.commit()
+    conn.close()
+    print(f"Seeded {imported} entities.")
+
+
+async def seed_void():
+    """Import void entries from export file if database is empty"""
+    seed_file = Path(__file__).parent / "void_export.json"
+    if not seed_file.exists():
+        return
+    
+    async with aiosqlite.connect(VOID_DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM entries")
+        row = await cursor.fetchone()
+        if row[0] > 0:
+            print(f"Void DB already has {row[0]} entries, skipping seed.")
+            return
         
-        # Import memory entities + observations
-        if "memories" in data:
-            conn = get_db()
+        print("Seeding void database from export...")
+        with open(seed_file) as f:
+            entries = json.load(f)
+        
+        imported = 0
+        for entry in entries:
             try:
-                for entity in data["memories"]:
-                    try:
-                        cursor = conn.execute(
-                            "INSERT OR IGNORE INTO entities (name, entity_type, database, salience, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                            (entity['name'], entity['type'], entity['database'], entity['salience'], entity.get('created_at', now_iso()), entity.get('updated_at', now_iso()))
-                        )
-                        entity_id = cursor.lastrowid
-                        if entity_id == 0:
-                            row = conn.execute("SELECT id FROM entities WHERE name = ? AND database = ?", (entity['name'], entity['database'])).fetchone()
-                            entity_id = row['id']
-                        
-                        for obs in entity.get('observations', []):
-                            conn.execute(
-                                "INSERT INTO observations (entity_id, content, added_at) VALUES (?, ?, ?)",
-                                (entity_id, obs['content'], obs.get('added_at', now_iso()))
-                            )
-                            results["observations"] += 1
-                        
-                        results["memories"] += 1
-                    except Exception as e:
-                        results["errors"].append(f"Entity '{entity.get('name', '?')}': {str(e)}")
-                
-                conn.commit()
-            finally:
-                conn.close()
+                await db.execute(
+                    """INSERT INTO entries (created_at, session_id, thread_id, title, summary, decisions, open_loops, artifacts_json, tags_json, importance)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (entry.get('created_at', now_iso()), entry.get('session_id'), entry.get('thread_id'),
+                     entry.get('title', ''), entry.get('summary', ''), entry.get('decisions', ''),
+                     entry.get('open_loops', ''), entry.get('artifacts_json', '{}'), entry.get('tags_json', '[]'),
+                     entry.get('importance', 1))
+                )
+                imported += 1
+            except Exception as e:
+                print(f"  Error importing void entry '{entry.get('title', '?')}': {e}")
         
-        # Import void entries
-        if "void_entries" in data:
-            async with aiosqlite.connect(VOID_DB_PATH) as db:
-                for entry in data["void_entries"]:
-                    try:
-                        await db.execute(
-                            """INSERT INTO entries (created_at, session_id, thread_id, title, summary, decisions, open_loops, artifacts_json, tags_json, importance)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (entry.get('created_at', now_iso()), entry.get('session_id'), entry.get('thread_id'),
-                             entry.get('title', ''), entry.get('summary', ''), entry.get('decisions', ''),
-                             entry.get('open_loops', ''), entry.get('artifacts_json', '{}'), entry.get('tags_json', '[]'),
-                             entry.get('importance', 1))
-                        )
-                        results["void_entries"] += 1
-                    except Exception as e:
-                        results["errors"].append(f"Void entry '{entry.get('title', '?')}': {str(e)}")
-                
-                await db.commit()
-        
-        return JSONResponse({"success": True, **results})
-    except Exception as e:
-        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+        await db.commit()
+        print(f"Seeded {imported} void entries.")
 
-# Add migration route to FastMCP's app
-mcp._additional_routes = [Route("/migrate", migrate_handler, methods=["POST"])]
 
 # ============================================================
 # MAIN
@@ -926,6 +940,10 @@ if __name__ == "__main__":
     
     # Initialize The Void database
     asyncio.run(init_void_database())
+    
+    # Seed data from exports if databases are empty
+    seed_memories()
+    asyncio.run(seed_void())
     
     # Auto-detect deployment: if PORT env var exists, run SSE for remote access
     port = int(os.environ.get("PORT", 0))
