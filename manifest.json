@@ -1,0 +1,47 @@
+{
+  "dxt_version": "0.1",
+  "name": "Companion Memory",
+  "version": "1.0.0",
+  "description": "Persistent memory system for Claude conversations",
+  "long_description": "A local memory database that allows Claude to store and retrieve information across conversations, creating true continuity and personalized context.",
+  "author": {
+    "name": "Arden",
+    "url": ""
+  },
+  "homepage": "",
+  "documentation": "",
+  "support": "",
+  "icon": "icon.png",
+  "server": {
+    "type": "python",
+    "entry_point": "memory_server.py"
+  },
+  "tools": [
+    {
+      "name": "store_memory",
+      "description": "Store a new memory or add observation to existing entity"
+    },
+    {
+      "name": "retrieve_memory",
+      "description": "Retrieve all information about a specific entity"
+    },
+    {
+      "name": "search_memories",
+      "description": "Search across memories for relevant entities and observations"
+    },
+    {
+      "name": "list_entities",
+      "description": "List entities from a specific database"
+    },
+    {
+      "name": "update_entity",
+      "description": "Update an entity's metadata"
+    },
+    {
+      "name": "get_context_block",
+      "description": "Generate formatted context block for conversations"
+    }
+  ],
+  "keywords": ["memory", "persistence", "context"],
+  "license": "MIT"
+}
