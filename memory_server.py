@@ -25,7 +25,7 @@ MEMORY_DB_PATH = DATA_DIR / "memory.db"
 VOID_DB_PATH = DATA_DIR / "the_void.sqlite3"
 
 # Lovense config
-LOVENSE_URL = "https://lovense-cloud.amarisaster.workers.dev"
+LOVENSE_URL = "https://lovense-cloud.ardenvale.workers.dev"
 
 # ============================================================
 # DATABASE INITIALIZATION
